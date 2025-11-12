@@ -1,0 +1,201 @@
+# ========== PHASE 2: Environment Setup ==========
+
+# 1️⃣ Go to your working directory
+cd ~/chain/fabric-samples
+
+# 2️⃣ Create your project folder
+mkdir student-cert-network && cd student-cert-network
+
+# 3️⃣ Copy Fabric binaries (if not already)
+cp ../bin/* ./ || echo "Fabric binaries already exist"
+
+# 4️⃣ Create crypto-config.yaml
+cat <<EOF > crypto-config.yaml
+OrdererOrgs:
+  - Name: OrdererOrg
+    Domain: cert.com
+    Specs:
+      - Hostname: orderer
+
+PeerOrgs:
+  - Name: UniversityOrg
+    Domain: university.cert.com
+    Template:
+      Count: 1
+    Users:
+      Count: 1
+
+  - Name: VerifierOrg
+    Domain: verifier.cert.com
+    Template:
+      Count: 1
+    Users:
+      Count: 1
+EOF
+
+# 5️⃣ Generate crypto material
+../bin/cryptogen generate --config=./crypto-config.yaml
+
+# 6️⃣ Create configtx.yaml
+cat <<'EOF' > configtx.yaml
+Organizations:
+  - &OrdererOrg
+    Name: OrdererOrg
+    ID: OrdererMSP
+    MSPDir: crypto-config/ordererOrganizations/cert.com/msp
+
+  - &UniversityOrg
+    Name: UniversityOrgMSP
+    ID: UniversityOrgMSP
+    MSPDir: crypto-config/peerOrganizations/university.cert.com/msp
+    AnchorPeers:
+      - Host: peer0.university.cert.com
+        Port: 7051
+
+  - &VerifierOrg
+    Name: VerifierOrgMSP
+    ID: VerifierOrgMSP
+    MSPDir: crypto-config/peerOrganizations/verifier.cert.com/msp
+    AnchorPeers:
+      - Host: peer0.verifier.cert.com
+        Port: 9051
+
+Capabilities:
+  Channel: &ChannelCapabilities
+    V2_0: true
+  Orderer: &OrdererCapabilities
+    V2_0: true
+  Application: &ApplicationCapabilities
+    V2_0: true
+
+Application: &ApplicationDefaults
+  Organizations:
+  Capabilities:
+    <<: *ApplicationCapabilities
+
+Orderer: &OrdererDefaults
+  OrdererType: solo
+  Addresses:
+    - orderer.cert.com:7050
+  BatchTimeout: 2s
+  BatchSize:
+    MaxMessageCount: 10
+    AbsoluteMaxBytes: 99 MB
+    PreferredMaxBytes: 512 KB
+  Organizations:
+
+Channel: &ChannelDefaults
+  Capabilities:
+    <<: *ChannelCapabilities
+
+Profiles:
+  TwoOrgsChannel:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations:
+        - *OrdererOrg
+    Application:
+      <<: *ApplicationDefaults
+      Organizations:
+        - *UniversityOrg
+        - *VerifierOrg
+EOF
+
+# 7️⃣ Generate channel artifacts
+mkdir channel-artifacts
+../bin/configtxgen -profile TwoOrgsChannel -outputBlock ./channel-artifacts/genesis.block
+../bin/configtxgen -profile TwoOrgsChannel -outputCreateChannelTx ./channel-artifacts/channel.tx -channelID certchannel
+
+# 8️⃣ Create docker-compose.yaml
+cat <<'EOF' > docker-compose.yaml
+version: '2'
+networks:
+  certnet:
+services:
+  orderer.cert.com:
+    image: hyperledger/fabric-orderer:2.5
+    container_name: orderer.cert.com
+    environment:
+      - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+      - ORDERER_GENERAL_GENESISMETHOD=file
+      - ORDERER_GENERAL_GENESISFILE=/var/hyperledger/orderer/orderer.genesis.block
+      - ORDERER_GENERAL_LOCALMSPID=OrdererMSP
+    command: orderer
+    volumes:
+      - ./channel-artifacts/genesis.block:/var/hyperledger/orderer/orderer.genesis.block
+      - ./crypto-config/ordererOrganizations/cert.com/orderers/orderer.cert.com/msp:/var/hyperledger/orderer/msp
+    ports:
+      - 7050:7050
+    networks:
+      - certnet
+
+  peer0.university.cert.com:
+    image: hyperledger/fabric-peer:2.5
+    container_name: peer0.university.cert.com
+    environment:
+      - CORE_PEER_ID=peer0.university.cert.com
+      - CORE_PEER_ADDRESS=peer0.university.cert.com:7051
+      - CORE_PEER_LOCALMSPID=UniversityOrgMSP
+      - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb.university.cert.com:5984
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw
+    volumes:
+      - ./crypto-config/peerOrganizations/university.cert.com/peers/peer0.university.cert.com/msp:/etc/hyperledger/fabric/msp
+    depends_on:
+      - couchdb.university.cert.com
+    ports:
+      - 7051:7051
+    networks:
+      - certnet
+
+  peer0.verifier.cert.com:
+    image: hyperledger/fabric-peer:2.5
+    container_name: peer0.verifier.cert.com
+    environment:
+      - CORE_PEER_ID=peer0.verifier.cert.com
+      - CORE_PEER_ADDRESS=peer0.verifier.cert.com:9051
+      - CORE_PEER_LOCALMSPID=VerifierOrgMSP
+      - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb.verifier.cert.com:7984
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw
+    volumes:
+      - ./crypto-config/peerOrganizations/verifier.cert.com/peers/peer0.verifier.cert.com/msp:/etc/hyperledger/fabric/msp
+    depends_on:
+      - couchdb.verifier.cert.com
+    ports:
+      - 9051:9051
+    networks:
+      - certnet
+
+  couchdb.university.cert.com:
+    image: couchdb:3.3
+    container_name: couchdb.university.cert.com
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=adminpw
+    ports:
+      - 5984:5984
+    networks:
+      - certnet
+
+  couchdb.verifier.cert.com:
+    image: couchdb:3.3
+    container_name: couchdb.verifier.cert.com
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=adminpw
+    ports:
+      - 7984:5984
+    networks:
+      - certnet
+EOF
+
+# 9️⃣ Launch the network
+docker-compose up -d
+
+# 🔟 Check everything is running
+docker ps
+

@@ -1,0 +1,22 @@
+Your workstation (host)
+└─ ~/chain/fabric-samples/cert-network
+   ├─ crypto-config/                ← generated identities (MSP keys & certs)
+   ├─ channel-artifacts/
+   │   ├─ genesis.block             ← orderer genesis block
+   │   └─ certchannel.tx            ← channel creation transaction
+   ├─ docker-compose.yaml           ← launches orderer, peers, CouchDBs
+   ├─ configtx.yaml                 ← channel & org profile definitions
+   └─ crypto-config.yaml            ← org/peer/orderer identity definitions
+
+Docker network (containers)
+┌───────────────────────────────────────────────────────────┐
+│ orderer.cert.com   (orderer)  -- listens on port 7050     │
+│ peer0.university.cert.com (peer) -- port 7051             │
+│ peer0.verifier.cert.com  (peer) -- port 9051              │
+│ couchdb.university.cert.com (CouchDB) -- 5984             │
+│ couchdb.verifier.cert.com (CouchDB) -- 7984               │
+└───────────────────────────────────────────────────────────┘
+
+Ledger / World State (CouchDB per org)
+- Certificate, Verification, University JSON documents will be stored here once chaincode runs.
+
